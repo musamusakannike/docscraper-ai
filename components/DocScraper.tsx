@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Search, 
@@ -14,8 +14,15 @@ import {
   Cpu, 
   Layers, 
   Zap,
-  Github
+  Github,
+  XCircle,
 } from 'lucide-react';
+
+interface ProgressEntry {
+  url: string;
+  title?: string;
+  status: 'scraping' | 'done' | 'failed';
+}
 
 export default function DocScraper() {
   const [url, setUrl] = useState('');
@@ -23,8 +30,19 @@ export default function DocScraper() {
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pageCount, setPageCount] = useState(0);
+  const [failedCount, setFailedCount] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [progressLog, setProgressLog] = useState<ProgressEntry[]>([]);
+  const [scrapedCount, setScrapedCount] = useState(0);
+  const [queuedCount, setQueuedCount] = useState(0);
   const resultRef = useRef<HTMLDivElement>(null);
+  const logRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (logRef.current) {
+      logRef.current.scrollTop = logRef.current.scrollHeight;
+    }
+  }, [progressLog]);
 
   const handleScrape = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,6 +52,10 @@ export default function DocScraper() {
     setError(null);
     setResult(null);
     setPageCount(0);
+    setFailedCount(0);
+    setProgressLog([]);
+    setScrapedCount(0);
+    setQueuedCount(0);
 
     try {
       const response = await fetch('/api/scrape', {
@@ -42,14 +64,65 @@ export default function DocScraper() {
         body: JSON.stringify({ url }),
       });
 
-      const data = await response.json();
-
-      if (!response.ok) {
+      if (!response.ok || !response.body) {
+        const data = await response.json();
         throw new Error(data.error || 'Failed to scrape documentation');
       }
 
-      setResult(data.markdown);
-      setPageCount(data.pageCount);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop() ?? '';
+
+        for (const part of parts) {
+          const line = part.trim();
+          if (!line.startsWith('data:')) continue;
+
+          try {
+            const event = JSON.parse(line.slice(5).trim());
+
+            if (event.type === 'progress') {
+              setScrapedCount(event.scraped);
+              setQueuedCount(event.queued);
+              setProgressLog((prev: ProgressEntry[]) => {
+                if (prev.some((p: ProgressEntry) => p.url === event.currentUrl)) return prev;
+                return [...prev, { url: event.currentUrl, status: 'scraping' }];
+              });
+            } else if (event.type === 'page_done') {
+              setProgressLog((prev: ProgressEntry[]) =>
+                prev.map((p: ProgressEntry) =>
+                  p.url === event.currentUrl
+                    ? { ...p, title: event.title, status: 'done' }
+                    : p
+                )
+              );
+            } else if (event.type === 'page_failed') {
+              setFailedCount((n: number) => n + 1);
+              setProgressLog((prev: ProgressEntry[]) =>
+                prev.map((p: ProgressEntry) =>
+                  p.url === event.currentUrl ? { ...p, status: 'failed' } : p
+                )
+              );
+            } else if (event.type === 'complete') {
+              setResult(event.markdown);
+              setPageCount(event.pageCount);
+            } else if (event.type === 'error') {
+              throw new Error(event.message);
+            }
+          } catch (parseErr: any) {
+            if (parseErr.message && !parseErr.message.includes('JSON')) {
+              throw parseErr;
+            }
+          }
+        }
+      }
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -185,7 +258,12 @@ export default function DocScraper() {
                   </div>
                   <div>
                     <h3 className="font-bold text-white text-lg">Knowledge Extracted</h3>
-                    <p className="text-zinc-400 text-sm">Successfully compiled {pageCount} pages</p>
+                    <p className="text-zinc-400 text-sm">
+                      Successfully compiled {pageCount} pages
+                      {failedCount > 0 && (
+                        <span className="ml-2 text-amber-400">· {failedCount} failed</span>
+                      )}
+                    </p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
@@ -233,21 +311,62 @@ export default function DocScraper() {
         </AnimatePresence>
 
         {isScraping && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="flex flex-col items-center justify-center py-20 space-y-6"
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="rounded-[2rem] border border-white/5 bg-[#0a0f1e]/80 backdrop-blur-xl shadow-2xl overflow-hidden"
           >
-            <div className="relative">
-              <div className="w-24 h-24 border-2 border-emerald-500/10 rounded-full" />
-              <div className="w-24 h-24 border-t-2 border-emerald-500 rounded-full animate-spin absolute top-0 left-0 shadow-[0_0_20px_rgba(16,185,129,0.2)]" />
-              <div className="absolute inset-0 flex items-center justify-center">
-                <Layers className="text-emerald-500 animate-pulse" size={24} />
+            <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-white/5">
+              <div className="flex items-center gap-3">
+                <Layers className="text-emerald-500 animate-pulse" size={16} />
+                <span className="text-sm font-semibold text-zinc-300">Crawling in progress</span>
+              </div>
+              <div className="flex items-center gap-4 text-xs text-zinc-500 font-mono">
+                <span><span className="text-emerald-400 font-bold">{scrapedCount}</span> scraped</span>
+                <span><span className="text-zinc-300 font-bold">{queuedCount}</span> queued</span>
               </div>
             </div>
-            <div className="text-center">
-              <p className="text-white font-bold text-xl mb-2">Analyzing Structure...</p>
-              <p className="text-zinc-500 max-w-xs mx-auto">Gemini is crawling documentation pages and converting them to structured context.</p>
+
+            {/* Progress bar */}
+            <div className="h-0.5 bg-white/5">
+              <motion.div
+                className="h-full bg-gradient-to-r from-emerald-500 to-emerald-400"
+                animate={{ width: scrapedCount === 0 ? '4%' : `${Math.min((scrapedCount / 50) * 100, 100)}%` }}
+                transition={{ duration: 0.4 }}
+              />
+            </div>
+
+            {/* Scrolling log */}
+            <div
+              ref={logRef}
+              className="h-72 overflow-y-auto p-4 space-y-1 font-mono text-xs"
+            >
+              {progressLog.map((entry, i) => (
+                <div key={i} className="flex items-start gap-2.5 py-0.5">
+                  {entry.status === 'scraping' && (
+                    <Loader2 size={12} className="text-emerald-400 animate-spin mt-0.5 shrink-0" />
+                  )}
+                  {entry.status === 'done' && (
+                    <CheckCircle2 size={12} className="text-emerald-500 mt-0.5 shrink-0" />
+                  )}
+                  {entry.status === 'failed' && (
+                    <XCircle size={12} className="text-red-400 mt-0.5 shrink-0" />
+                  )}
+                  <div className="min-w-0">
+                    {entry.title && entry.status === 'done' ? (
+                      <span className="text-zinc-300">{entry.title}</span>
+                    ) : (
+                      <span className="text-zinc-500 truncate block">{entry.url}</span>
+                    )}
+                    {entry.status !== 'scraping' && (
+                      <span className="text-zinc-700 text-[10px] truncate block">{entry.url}</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {progressLog.length === 0 && (
+                <p className="text-zinc-600 text-center pt-8">Starting crawl...</p>
+              )}
             </div>
           </motion.div>
         )}
