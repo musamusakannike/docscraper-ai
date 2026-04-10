@@ -18,6 +18,10 @@ import {
   XCircle,
   SlidersHorizontal,
   ChevronDown,
+  ChevronUp,
+  Code2,
+  AlignLeft,
+  Braces,
 } from 'lucide-react';
 
 interface ProgressEntry {
@@ -25,6 +29,21 @@ interface ProgressEntry {
   title?: string;
   status: 'scraping' | 'done' | 'failed';
 }
+
+interface PageResult {
+  title: string;
+  content: string;
+  url: string;
+}
+
+type ExportFormat = 'md' | 'txt' | 'json' | 'html';
+
+const EXPORT_FORMATS: { id: ExportFormat; label: string; ext: string; mime: string; icon: React.ElementType }[] = [
+  { id: 'md',   label: 'Markdown', ext: 'md',   mime: 'text/markdown',   icon: FileText },
+  { id: 'txt',  label: 'Plain Text', ext: 'txt', mime: 'text/plain',     icon: AlignLeft },
+  { id: 'json', label: 'JSON',     ext: 'json', mime: 'application/json', icon: Braces },
+  { id: 'html', label: 'HTML',     ext: 'html', mime: 'text/html',       icon: Code2 },
+];
 
 const PAGE_LIMIT_OPTIONS = [10, 25, 50, 100] as const;
 const DEPTH_OPTIONS = [1, 2, 3, 4, 5] as const;
@@ -43,8 +62,22 @@ export default function DocScraper() {
   const [maxPages, setMaxPages] = useState<number>(50);
   const [crawlDepth, setCrawlDepth] = useState<number>(3);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [rawResults, setRawResults] = useState<PageResult[]>([]);
+  const [exportFormat, setExportFormat] = useState<ExportFormat>('md');
+  const [showExportMenu, setShowExportMenu] = useState(false);
   const resultRef = useRef<HTMLDivElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
+        setShowExportMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   useEffect(() => {
     if (logRef.current) {
@@ -121,6 +154,7 @@ export default function DocScraper() {
             } else if (event.type === 'complete') {
               setResult(event.markdown);
               setPageCount(event.pageCount);
+              setRawResults(event.results ?? []);
             } else if (event.type === 'error') {
               throw new Error(event.message);
             }
@@ -138,17 +172,50 @@ export default function DocScraper() {
     }
   };
 
-  const downloadMarkdown = () => {
-    if (!result) return;
-    const blob = new Blob([result], { type: 'text/markdown' });
-    const url = URL.createObjectURL(blob);
+  const buildExportContent = (format: ExportFormat): { content: string; mime: string; ext: string } => {
+    const fmt = EXPORT_FORMATS.find((f) => f.id === format)!;
+    if (format === 'md') {
+      return { content: result ?? '', mime: fmt.mime, ext: fmt.ext };
+    }
+    if (format === 'txt') {
+      const text = rawResults
+        .map((r) => `=== ${r.title} ===\nSource: ${r.url}\n\n${r.content.replace(/[#*`_~>\[\]]/g, '')}\n\n`)
+        .join('---\n\n');
+      return { content: text, mime: fmt.mime, ext: fmt.ext };
+    }
+    if (format === 'json') {
+      const json = JSON.stringify(
+        { generated: new Date().toISOString(), pageCount: rawResults.length, pages: rawResults },
+        null,
+        2
+      );
+      return { content: json, mime: fmt.mime, ext: fmt.ext };
+    }
+    // html
+    const hostname = (() => { try { return new URL(url).hostname; } catch { return 'docs'; } })();
+    const htmlPages = rawResults
+      .map(
+        (r) =>
+          `<section>\n  <h2><a href="${r.url}">${r.title}</a></h2>\n  <pre>${r.content.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>\n</section>`
+      )
+      .join('\n\n');
+    const html = `<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8" />\n<title>${hostname} Documentation</title>\n</head>\n<body>\n<h1>${hostname} Documentation</h1>\n${htmlPages}\n</body>\n</html>`;
+    return { content: html, mime: fmt.mime, ext: fmt.ext };
+  };
+
+  const handleExport = (format: ExportFormat) => {
+    const { content, mime, ext } = buildExportContent(format);
+    const hostname = (() => { try { return new URL(url).hostname; } catch { return 'documentation'; } })();
+    const blob = new Blob([content], { type: mime });
+    const href = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
-    a.download = 'documentation.md';
+    a.href = href;
+    a.download = `${hostname}-docs.${ext}`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    URL.revokeObjectURL(href);
+    setShowExportMenu(false);
   };
 
   const copyToClipboard = () => {
@@ -371,13 +438,64 @@ export default function DocScraper() {
                     {copied ? <CheckCircle2 size={16} className="text-emerald-400" /> : <Copy size={16} />}
                     {copied ? 'Copied!' : 'Copy'}
                   </button>
-                  <button
-                    onClick={downloadMarkdown}
-                    className="flex-1 md:flex-none px-6 py-3 bg-emerald-500 text-zinc-950 rounded-xl font-bold text-sm hover:bg-emerald-400 transition-all flex items-center justify-center gap-2"
-                  >
-                    <Download size={16} />
-                    Export .MD
-                  </button>
+
+                  {/* Export dropdown */}
+                  <div className="relative" ref={exportMenuRef}>
+                    <div className="flex rounded-xl overflow-hidden border border-emerald-500/60">
+                      <button
+                        onClick={() => handleExport(exportFormat)}
+                        className="px-4 py-3 bg-emerald-500 text-zinc-950 font-bold text-sm hover:bg-emerald-400 transition-all flex items-center gap-2"
+                      >
+                        <Download size={15} />
+                        Export .{exportFormat.toUpperCase()}
+                      </button>
+                      <button
+                        onClick={() => setShowExportMenu((v) => !v)}
+                        className="px-2.5 bg-emerald-600 hover:bg-emerald-500 text-zinc-950 transition-all border-l border-emerald-400/30"
+                        aria-label="Choose export format"
+                      >
+                        {showExportMenu ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                      </button>
+                    </div>
+
+                    <AnimatePresence>
+                      {showExportMenu && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 6, scale: 0.97 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: 6, scale: 0.97 }}
+                          transition={{ duration: 0.15 }}
+                          className="absolute right-0 mt-2 w-44 bg-[#0d1526] border border-white/10 rounded-2xl shadow-2xl overflow-hidden z-50"
+                        >
+                          <p className="text-[10px] font-semibold text-zinc-600 uppercase tracking-widest px-4 pt-3 pb-1">Format</p>
+                          {EXPORT_FORMATS.map((fmt) => (
+                            <button
+                              key={fmt.id}
+                              onClick={() => { setExportFormat(fmt.id); setShowExportMenu(false); }}
+                              className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${
+                                exportFormat === fmt.id
+                                  ? 'text-emerald-400 bg-emerald-500/10'
+                                  : 'text-zinc-400 hover:text-white hover:bg-white/5'
+                              }`}
+                            >
+                              <fmt.icon size={14} className={exportFormat === fmt.id ? 'text-emerald-400' : 'text-zinc-600'} />
+                              {fmt.label}
+                              <span className="ml-auto font-mono text-[10px] text-zinc-600">.{fmt.ext}</span>
+                            </button>
+                          ))}
+                          <div className="p-2">
+                            <button
+                              onClick={() => handleExport(exportFormat)}
+                              className="w-full py-2 bg-emerald-500 text-zinc-950 rounded-xl font-bold text-xs hover:bg-emerald-400 transition-all flex items-center justify-center gap-2"
+                            >
+                              <Download size={12} />
+                              Download .{exportFormat.toUpperCase()}
+                            </button>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
                 </div>
               </div>
 

@@ -156,7 +156,7 @@ export async function POST(req: NextRequest) {
         compiledMarkdown += `---\n\n`;
       });
 
-      send('complete', { markdown: compiledMarkdown, pageCount: results.length });
+      send('complete', { markdown: compiledMarkdown, pageCount: results.length, results });
     } catch (error: any) {
       console.error('Scraping error:', error);
       send('error', { message: error.message || 'Failed to scrape documentation' });
