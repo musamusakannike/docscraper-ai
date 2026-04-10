@@ -26,6 +26,14 @@ import {
   Trash2,
   RotateCcw,
   Clock,
+  Sparkles,
+  MessageSquare,
+  BookOpen,
+  Eye,
+  EyeOff,
+  Send,
+  StopCircle,
+  ChevronRight,
 } from 'lucide-react';
 
 interface ProgressEntry {
@@ -52,6 +60,17 @@ interface HistoryEntry {
 
 const HISTORY_KEY = 'docscraper_history';
 const MAX_HISTORY = 20;
+const API_KEY_STORAGE = 'docscraper_or_key';
+
+type AiMode = 'summarize' | 'qa';
+
+const OPENROUTER_MODELS = [
+  { id: 'google/gemini-2.0-flash-001',       label: 'Gemini 2.0 Flash' },
+  { id: 'google/gemini-2.5-pro-preview-03-25', label: 'Gemini 2.5 Pro' },
+  { id: 'anthropic/claude-3.5-sonnet',        label: 'Claude 3.5 Sonnet' },
+  { id: 'openai/gpt-4o',                      label: 'GPT-4o' },
+  { id: 'openai/gpt-4o-mini',                 label: 'GPT-4o Mini' },
+] as const;
 
 type ExportFormat = 'md' | 'txt' | 'json' | 'html';
 
@@ -85,6 +104,17 @@ export default function DocScraper() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [clearConfirm, setClearConfirm] = useState(false);
+  const [aiApiKey, setAiApiKey] = useState('');
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [aiModel, setAiModel] = useState<string>(OPENROUTER_MODELS[0].id);
+  const [aiMode, setAiMode] = useState<AiMode>('summarize');
+  const [aiQuestion, setAiQuestion] = useState('');
+  const [aiResponse, setAiResponse] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [showAiPanel, setShowAiPanel] = useState(false);
+  const aiAbortRef = useRef<AbortController | null>(null);
+  const aiResponseRef = useRef<HTMLDivElement>(null);
   const resultRef = useRef<HTMLDivElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const exportMenuRef = useRef<HTMLDivElement>(null);
@@ -94,7 +124,17 @@ export default function DocScraper() {
       const stored = localStorage.getItem(HISTORY_KEY);
       if (stored) setHistory(JSON.parse(stored));
     } catch {}
+    try {
+      const key = localStorage.getItem(API_KEY_STORAGE);
+      if (key) setAiApiKey(key);
+    } catch {}
   }, []);
+
+  useEffect(() => {
+    if (aiResponseRef.current) {
+      aiResponseRef.current.scrollTop = aiResponseRef.current.scrollHeight;
+    }
+  }, [aiResponse]);
 
   const persistHistory = (entries: HistoryEntry[]) => {
     setHistory(entries);
@@ -238,6 +278,78 @@ export default function DocScraper() {
     persistHistory([]);
     setClearConfirm(false);
     setShowHistory(false);
+  };
+
+  const saveApiKey = (key: string) => {
+    setAiApiKey(key);
+    try { localStorage.setItem(API_KEY_STORAGE, key); } catch {}
+  };
+
+  const handleAiSubmit = async () => {
+    if (!aiApiKey.trim()) { setAiError('Please enter your OpenRouter API key.'); return; }
+    if (aiMode === 'qa' && !aiQuestion.trim()) { setAiError('Please enter a question.'); return; }
+    if (!result) { setAiError('No documentation loaded yet.'); return; }
+
+    setAiLoading(true);
+    setAiError(null);
+    setAiResponse('');
+
+    const controller = new AbortController();
+    aiAbortRef.current = controller;
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          apiKey: aiApiKey.trim(),
+          model: aiModel,
+          mode: aiMode,
+          question: aiQuestion,
+          markdown: result,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok || !res.body) {
+        const data = await res.json();
+        throw new Error(data.error || 'AI request failed');
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop() ?? '';
+
+        for (const part of parts) {
+          const line = part.trim();
+          if (!line.startsWith('data:')) continue;
+          const data = line.slice(5).trim();
+          if (data === '[DONE]') break;
+          try {
+            const json = JSON.parse(data);
+            const delta = json.choices?.[0]?.delta?.content;
+            if (delta) setAiResponse((prev) => prev + delta);
+          } catch {}
+        }
+      }
+    } catch (err: any) {
+      if (err.name !== 'AbortError') setAiError(err.message);
+    } finally {
+      setAiLoading(false);
+      aiAbortRef.current = null;
+    }
+  };
+
+  const stopAi = () => {
+    aiAbortRef.current?.abort();
+    setAiLoading(false);
   };
 
   const buildExportContent = (format: ExportFormat): { content: string; mime: string; ext: string } => {
@@ -589,6 +701,227 @@ export default function DocScraper() {
                   </div>
                 </div>
               </div>
+
+              {/* AI Panel */}
+              <div className="rounded-[2rem] border border-white/5 bg-[#0a0f1e]/80 backdrop-blur-xl shadow-2xl overflow-hidden">
+                {/* Panel header / toggle */}
+                <button
+                  onClick={() => setShowAiPanel((v) => !v)}
+                  className="w-full flex items-center justify-between px-6 py-4 hover:bg-white/[0.02] transition-colors group/ai"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-7 h-7 rounded-xl bg-violet-500/20 border border-violet-500/30 flex items-center justify-center">
+                      <Sparkles size={13} className="text-violet-400" />
+                    </div>
+                    <span className="text-sm font-semibold text-zinc-300">AI Summarize &amp; Q&amp;A</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-500/10 border border-violet-500/20 text-violet-400 font-semibold">OpenRouter</span>
+                  </div>
+                  <ChevronDown
+                    size={15}
+                    className={`text-zinc-600 transition-transform duration-200 ${showAiPanel ? 'rotate-180' : ''}`}
+                  />
+                </button>
+
+                <AnimatePresence>
+                  {showAiPanel && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="overflow-hidden"
+                    >
+                      <div className="px-6 pb-6 space-y-5 border-t border-white/5">
+
+                        {/* API Key */}
+                        <div className="space-y-2 pt-5">
+                          <label className="text-xs font-semibold text-zinc-400 flex items-center gap-1.5">
+                            OpenRouter API Key
+                            <a
+                              href="https://openrouter.ai/keys"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-violet-400 hover:text-violet-300 transition-colors inline-flex items-center gap-1"
+                            >
+                              Get key <ExternalLink size={10} />
+                            </a>
+                          </label>
+                          <div className="relative">
+                            <input
+                              type={showApiKey ? 'text' : 'password'}
+                              placeholder="sk-or-..."
+                              value={aiApiKey}
+                              onChange={(e) => saveApiKey(e.target.value)}
+                              className="w-full pr-10 pl-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-sm text-zinc-200 placeholder:text-zinc-600 outline-none focus:border-violet-500/50 focus:ring-4 focus:ring-violet-500/10 transition-all font-mono"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowApiKey((v) => !v)}
+                              className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-600 hover:text-zinc-300 transition-colors"
+                            >
+                              {showApiKey ? <EyeOff size={15} /> : <Eye size={15} />}
+                            </button>
+                          </div>
+                          <p className="text-[11px] text-zinc-700">Stored locally in your browser. Never sent anywhere except OpenRouter.</p>
+                        </div>
+
+                        {/* Model + Mode row */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <label className="text-xs font-semibold text-zinc-400">Model</label>
+                            <select
+                              value={aiModel}
+                              onChange={(e) => setAiModel(e.target.value)}
+                              className="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-sm text-zinc-200 outline-none focus:border-violet-500/50 transition-all appearance-none cursor-pointer"
+                            >
+                              {OPENROUTER_MODELS.map((m) => (
+                                <option key={m.id} value={m.id} className="bg-zinc-900">{m.label}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="space-y-2">
+                            <label className="text-xs font-semibold text-zinc-400">Mode</label>
+                            <div className="flex rounded-xl overflow-hidden border border-white/10">
+                              <button
+                                onClick={() => setAiMode('summarize')}
+                                className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-xs font-semibold transition-all ${
+                                  aiMode === 'summarize'
+                                    ? 'bg-violet-500/20 text-violet-300 border-r border-violet-500/30'
+                                    : 'bg-white/5 text-zinc-500 border-r border-white/10 hover:bg-white/10'
+                                }`}
+                              >
+                                <BookOpen size={12} /> Summarize
+                              </button>
+                              <button
+                                onClick={() => setAiMode('qa')}
+                                className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-xs font-semibold transition-all ${
+                                  aiMode === 'qa'
+                                    ? 'bg-violet-500/20 text-violet-300'
+                                    : 'bg-white/5 text-zinc-500 hover:bg-white/10'
+                                }`}
+                              >
+                                <MessageSquare size={12} /> Q&amp;A
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Question input (Q&A mode) */}
+                        <AnimatePresence>
+                          {aiMode === 'qa' && (
+                            <motion.div
+                              initial={{ opacity: 0, height: 0 }}
+                              animate={{ opacity: 1, height: 'auto' }}
+                              exit={{ opacity: 0, height: 0 }}
+                              transition={{ duration: 0.15 }}
+                              className="overflow-hidden"
+                            >
+                              <div className="relative pt-1">
+                                <input
+                                  type="text"
+                                  placeholder="e.g. How do I authenticate with this API?"
+                                  value={aiQuestion}
+                                  onChange={(e) => setAiQuestion(e.target.value)}
+                                  onKeyDown={(e) => { if (e.key === 'Enter' && !aiLoading) handleAiSubmit(); }}
+                                  className="w-full pl-4 pr-12 py-3 bg-white/5 border border-white/10 rounded-xl text-sm text-zinc-200 placeholder:text-zinc-600 outline-none focus:border-violet-500/50 focus:ring-4 focus:ring-violet-500/10 transition-all"
+                                />
+                                <button
+                                  onClick={handleAiSubmit}
+                                  disabled={aiLoading}
+                                  className="absolute right-2 top-1/2 -translate-y-1/2 mt-0.5 p-2 rounded-lg bg-violet-500/20 hover:bg-violet-500/40 text-violet-400 disabled:opacity-40 transition-all"
+                                >
+                                  <ChevronRight size={14} />
+                                </button>
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+
+                        {/* Action button */}
+                        {aiMode === 'summarize' && (
+                          <div className="flex gap-3">
+                            <button
+                              onClick={handleAiSubmit}
+                              disabled={aiLoading}
+                              className="flex-1 py-3 bg-violet-500/20 border border-violet-500/30 hover:bg-violet-500/30 text-violet-300 rounded-xl font-semibold text-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {aiLoading ? (
+                                <><Loader2 size={15} className="animate-spin" /> Generating...</>
+                              ) : (
+                                <><Sparkles size={15} /> Summarize Docs</>
+                              )}
+                            </button>
+                            {aiLoading && (
+                              <button
+                                onClick={stopAi}
+                                className="px-4 py-3 bg-red-500/10 border border-red-500/20 hover:bg-red-500/20 text-red-400 rounded-xl text-sm font-semibold transition-all flex items-center gap-2"
+                              >
+                                <StopCircle size={15} /> Stop
+                              </button>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Error */}
+                        <AnimatePresence>
+                          {aiError && (
+                            <motion.div
+                              initial={{ opacity: 0, y: 5 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0 }}
+                              className="flex items-start gap-3 p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm"
+                            >
+                              <AlertCircle size={15} className="shrink-0 mt-0.5" />
+                              {aiError}
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+
+                        {/* Response */}
+                        <AnimatePresence>
+                          {(aiResponse || aiLoading) && (
+                            <motion.div
+                              initial={{ opacity: 0, y: 8 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              className="rounded-2xl border border-violet-500/10 bg-violet-500/[0.04] overflow-hidden"
+                            >
+                              <div className="flex items-center gap-2 px-4 py-3 border-b border-violet-500/10">
+                                <Sparkles size={12} className="text-violet-400" />
+                                <span className="text-[11px] font-semibold text-violet-400 uppercase tracking-widest">AI Response</span>
+                                {aiLoading && (
+                                  <span className="ml-auto flex items-center gap-1.5 text-[10px] text-zinc-600">
+                                    <span className="inline-block w-1 h-1 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: '0ms' }} />
+                                    <span className="inline-block w-1 h-1 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: '150ms' }} />
+                                    <span className="inline-block w-1 h-1 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: '300ms' }} />
+                                  </span>
+                                )}
+                                {!aiLoading && aiResponse && (
+                                  <button
+                                    onClick={() => { navigator.clipboard.writeText(aiResponse); }}
+                                    className="ml-auto flex items-center gap-1.5 text-[11px] text-zinc-600 hover:text-zinc-300 transition-colors"
+                                  >
+                                    <Copy size={11} /> Copy
+                                  </button>
+                                )}
+                              </div>
+                              <div
+                                ref={aiResponseRef}
+                                className="p-5 max-h-96 overflow-y-auto font-mono text-sm text-zinc-300 leading-relaxed whitespace-pre-wrap selection:bg-violet-500/30"
+                              >
+                                {aiResponse}
+                                {aiLoading && <span className="inline-block w-2 h-4 bg-violet-400/70 animate-pulse ml-0.5" />}
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
             </motion.section>
           )}
         </AnimatePresence>
@@ -776,9 +1109,9 @@ export default function DocScraper() {
           <p className="text-emerald-500/60 font-medium">Enterprise Grade Scraping</p>
         </div>
         <div className="flex items-center gap-8">
-          <a href="#" className="hover:text-white transition-colors">Privacy</a>
-          <a href="#" className="hover:text-white transition-colors">Terms</a>
-          <a href="https://github.com" className="hover:text-white transition-colors flex items-center gap-2">
+          {/* <a href="#" className="hover:text-white transition-colors">Privacy</a>
+          <a href="#" className="hover:text-white transition-colors">Terms</a> */}
+          <a href="https://github.com/musamusakannike/docscraper-ai" className="hover:text-white transition-colors flex items-center gap-2">
             <Github size={16} /> GitHub
           </a>
         </div>
