@@ -409,16 +409,6 @@ export default function DocScraper() {
     <div className="min-h-screen p-4 md:p-8 flex flex-col items-center">
       <header className="w-full max-w-4xl py-12 md:py-20 text-center relative">
         <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-emerald-500/10 blur-[100px] pointer-events-none rounded-full" />
-        
-        <motion.div
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold uppercase tracking-wider mb-8"
-        >
-          <Cpu size={14} className="animate-pulse" />
-          Powered by Gemini AI
-        </motion.div>
-        
         <motion.h1 
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
