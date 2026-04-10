@@ -28,11 +28,14 @@ function sseEvent(type: string, payload: object): string {
 }
 
 export async function POST(req: NextRequest) {
-  const { url } = await req.json();
+  const { url, maxPages: rawMaxPages, crawlDepth: rawCrawlDepth } = await req.json();
 
   if (!url) {
     return new Response(JSON.stringify({ error: 'URL is required' }), { status: 400 });
   }
+
+  const MAX_PAGES = Math.min(Math.max(Number(rawMaxPages) || 50, 1), 200);
+  const CRAWL_DEPTH = Math.min(Math.max(Number(rawCrawlDepth) || 3, 1), 10);
 
   const stream = new TransformStream();
   const writer = stream.writable.getWriter();
@@ -51,16 +54,15 @@ export async function POST(req: NextRequest) {
 
       const baseUrl = new URL(normalizedUrl);
       const visited = new Set<string>();
-      const queue = [normalizedUrl];
+      const queue: { url: string; depth: number }[] = [{ url: normalizedUrl, depth: 0 }];
       const results: { title: string; content: string; url: string }[] = [];
 
-      const MAX_PAGES = 50;
       const CONCURRENCY = 5;
 
       while (queue.length > 0 && visited.size < MAX_PAGES) {
         const batch = queue.splice(0, Math.min(CONCURRENCY, MAX_PAGES - visited.size));
 
-        const batchPromises = batch.map(async (currentUrl) => {
+        const batchPromises = batch.map(async ({ url: currentUrl, depth: currentDepth }) => {
           if (visited.has(currentUrl)) return null;
           visited.add(currentUrl);
 
@@ -90,28 +92,33 @@ export async function POST(req: NextRequest) {
             const cleanedHtml = cleanHtml(html);
             const markdown = turndownService.turndown(cleanedHtml);
 
-            // Find more links
-            $('a[href]').each((_, el) => {
-              const href = $(el).attr('href');
-              if (!href) return;
+            // Find more links (only if within depth limit)
+            if (currentDepth < CRAWL_DEPTH) {
+              $('a[href]').each((_, el) => {
+                const href = $(el).attr('href');
+                if (!href) return;
 
-              try {
-                const absoluteUrl = new URL(href, currentUrl).href.split('#')[0];
-                const parsedAbsolute = new URL(absoluteUrl);
+                try {
+                  const absoluteUrl = new URL(href, currentUrl).href.split('#')[0];
+                  const parsedAbsolute = new URL(absoluteUrl);
 
-                if (
-                  parsedAbsolute.origin === baseUrl.origin &&
-                  parsedAbsolute.pathname.startsWith(baseUrl.pathname) &&
-                  !visited.has(absoluteUrl) &&
-                  !queue.includes(absoluteUrl) &&
-                  !batch.includes(absoluteUrl)
-                ) {
-                  if (!absoluteUrl.match(/\.(png|jpg|jpeg|gif|pdf|zip|svg|mp4|webm|webp|css|js)$/i)) {
-                    queue.push(absoluteUrl);
+                  const alreadyQueued = queue.some((q) => q.url === absoluteUrl);
+                  const inBatch = batch.some((b) => b.url === absoluteUrl);
+
+                  if (
+                    parsedAbsolute.origin === baseUrl.origin &&
+                    parsedAbsolute.pathname.startsWith(baseUrl.pathname) &&
+                    !visited.has(absoluteUrl) &&
+                    !alreadyQueued &&
+                    !inBatch
+                  ) {
+                    if (!absoluteUrl.match(/\.(png|jpg|jpeg|gif|pdf|zip|svg|mp4|webm|webp|css|js)$/i)) {
+                      queue.push({ url: absoluteUrl, depth: currentDepth + 1 });
+                    }
                   }
-                }
-              } catch (e) {}
-            });
+                } catch (e) {}
+              });
+            }
 
             send('page_done', { title, currentUrl });
             return { title, content: markdown, url: currentUrl };

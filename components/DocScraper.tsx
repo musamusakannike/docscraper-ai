@@ -16,6 +16,8 @@ import {
   Zap,
   Github,
   XCircle,
+  SlidersHorizontal,
+  ChevronDown,
 } from 'lucide-react';
 
 interface ProgressEntry {
@@ -23,6 +25,9 @@ interface ProgressEntry {
   title?: string;
   status: 'scraping' | 'done' | 'failed';
 }
+
+const PAGE_LIMIT_OPTIONS = [10, 25, 50, 100] as const;
+const DEPTH_OPTIONS = [1, 2, 3, 4, 5] as const;
 
 export default function DocScraper() {
   const [url, setUrl] = useState('');
@@ -35,6 +40,9 @@ export default function DocScraper() {
   const [progressLog, setProgressLog] = useState<ProgressEntry[]>([]);
   const [scrapedCount, setScrapedCount] = useState(0);
   const [queuedCount, setQueuedCount] = useState(0);
+  const [maxPages, setMaxPages] = useState<number>(50);
+  const [crawlDepth, setCrawlDepth] = useState<number>(3);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const resultRef = useRef<HTMLDivElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
 
@@ -61,7 +69,7 @@ export default function DocScraper() {
       const response = await fetch('/api/scrape', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ url, maxPages, crawlDepth }),
       });
 
       if (!response.ok || !response.body) {
@@ -204,6 +212,95 @@ export default function DocScraper() {
                   required
                 />
               </div>
+
+              {/* Advanced Settings Toggle */}
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowAdvanced((v) => !v)}
+                  className="flex items-center gap-2 text-xs font-semibold text-zinc-500 hover:text-zinc-300 transition-colors group/adv"
+                >
+                  <SlidersHorizontal size={13} className="text-emerald-500/70" />
+                  Advanced Settings
+                  <ChevronDown
+                    size={13}
+                    className={`transition-transform duration-200 ${showAdvanced ? 'rotate-180' : ''}`}
+                  />
+                </button>
+
+                <AnimatePresence>
+                  {showAdvanced && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="overflow-hidden"
+                    >
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 p-5 bg-white/[0.03] border border-white/5 rounded-2xl">
+
+                        {/* Page Limit */}
+                        <div className="space-y-3">
+                          <div>
+                            <p className="text-xs font-semibold text-zinc-300">Page Limit</p>
+                            <p className="text-[11px] text-zinc-600 mt-0.5">Max pages to crawl per run</p>
+                          </div>
+                          <div className="flex gap-2 flex-wrap">
+                            {PAGE_LIMIT_OPTIONS.map((n) => (
+                              <button
+                                key={n}
+                                type="button"
+                                onClick={() => setMaxPages(n)}
+                                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all border ${
+                                  maxPages === n
+                                    ? 'bg-emerald-500 border-emerald-500 text-zinc-950'
+                                    : 'bg-white/5 border-white/10 text-zinc-400 hover:border-emerald-500/40 hover:text-zinc-200'
+                                }`}
+                              >
+                                {n}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Crawl Depth */}
+                        <div className="space-y-3">
+                          <div>
+                            <p className="text-xs font-semibold text-zinc-300">
+                              Crawl Depth
+                              <span className="ml-2 text-emerald-400 font-mono">{crawlDepth}</span>
+                            </p>
+                            <p className="text-[11px] text-zinc-600 mt-0.5">How many link-hops from the start URL</p>
+                          </div>
+                          <div className="space-y-1.5">
+                            <input
+                              type="range"
+                              min={1}
+                              max={5}
+                              step={1}
+                              value={crawlDepth}
+                              onChange={(e) => setCrawlDepth(Number(e.target.value))}
+                              className="w-full h-1.5 rounded-full appearance-none bg-white/10 accent-emerald-500 cursor-pointer"
+                            />
+                            <div className="flex justify-between text-[10px] text-zinc-700 font-mono px-0.5">
+                              {DEPTH_OPTIONS.map((d) => (
+                                <span
+                                  key={d}
+                                  className={crawlDepth === d ? 'text-emerald-400' : ''}
+                                >
+                                  {d}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
               <motion.button
                 whileHover={{ scale: 1.01 }}
                 whileTap={{ scale: 0.99 }}
@@ -331,7 +428,7 @@ export default function DocScraper() {
             <div className="h-0.5 bg-white/5">
               <motion.div
                 className="h-full bg-gradient-to-r from-emerald-500 to-emerald-400"
-                animate={{ width: scrapedCount === 0 ? '4%' : `${Math.min((scrapedCount / 50) * 100, 100)}%` }}
+                animate={{ width: scrapedCount === 0 ? '4%' : `${Math.min((scrapedCount / maxPages) * 100, 100)}%` }}
                 transition={{ duration: 0.4 }}
               />
             </div>
