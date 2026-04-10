@@ -22,6 +22,10 @@ import {
   Code2,
   AlignLeft,
   Braces,
+  History,
+  Trash2,
+  RotateCcw,
+  Clock,
 } from 'lucide-react';
 
 interface ProgressEntry {
@@ -35,6 +39,19 @@ interface PageResult {
   content: string;
   url: string;
 }
+
+interface HistoryEntry {
+  id: string;
+  url: string;
+  hostname: string;
+  pageCount: number;
+  scrapedAt: string;
+  markdown: string;
+  results: PageResult[];
+}
+
+const HISTORY_KEY = 'docscraper_history';
+const MAX_HISTORY = 20;
 
 type ExportFormat = 'md' | 'txt' | 'json' | 'html';
 
@@ -65,9 +82,24 @@ export default function DocScraper() {
   const [rawResults, setRawResults] = useState<PageResult[]>([]);
   const [exportFormat, setExportFormat] = useState<ExportFormat>('md');
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [clearConfirm, setClearConfirm] = useState(false);
   const resultRef = useRef<HTMLDivElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const exportMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(HISTORY_KEY);
+      if (stored) setHistory(JSON.parse(stored));
+    } catch {}
+  }, []);
+
+  const persistHistory = (entries: HistoryEntry[]) => {
+    setHistory(entries);
+    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(entries)); } catch {}
+  };
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -155,6 +187,21 @@ export default function DocScraper() {
               setResult(event.markdown);
               setPageCount(event.pageCount);
               setRawResults(event.results ?? []);
+              const hostname = (() => { try { return new URL(url).hostname; } catch { return url; } })();
+              const entry: HistoryEntry = {
+                id: Date.now().toString(),
+                url,
+                hostname,
+                pageCount: event.pageCount,
+                scrapedAt: new Date().toISOString(),
+                markdown: event.markdown,
+                results: event.results ?? [],
+              };
+              setHistory((prev: HistoryEntry[]) => {
+                const next = [entry, ...prev.filter((h: HistoryEntry) => h.url !== url)].slice(0, MAX_HISTORY);
+                try { localStorage.setItem(HISTORY_KEY, JSON.stringify(next)); } catch {}
+                return next;
+              });
             } else if (event.type === 'error') {
               throw new Error(event.message);
             }
@@ -170,6 +217,27 @@ export default function DocScraper() {
     } finally {
       setIsScraping(false);
     }
+  };
+
+  const restoreFromHistory = (entry: HistoryEntry) => {
+    setUrl(entry.url);
+    setResult(entry.markdown);
+    setRawResults(entry.results);
+    setPageCount(entry.pageCount);
+    setFailedCount(0);
+    setProgressLog([]);
+    setShowHistory(false);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const deleteHistoryEntry = (id: string) => {
+    persistHistory(history.filter((h) => h.id !== id));
+  };
+
+  const clearHistory = () => {
+    persistHistory([]);
+    setClearConfirm(false);
+    setShowHistory(false);
   };
 
   const buildExportContent = (format: ExportFormat): { content: string; mime: string; ext: string } => {
@@ -584,6 +652,98 @@ export default function DocScraper() {
               )}
             </div>
           </motion.div>
+        )}
+
+        {/* History Panel */}
+        {history.length > 0 && !isScraping && (
+          <div className="space-y-3">
+            <button
+              onClick={() => { setShowHistory((v) => !v); setClearConfirm(false); }}
+              className="flex items-center gap-2 text-sm font-semibold text-zinc-500 hover:text-zinc-300 transition-colors"
+            >
+              <History size={15} className="text-emerald-500/70" />
+              Recent Scrapes
+              <span className="ml-1 px-1.5 py-0.5 rounded-md bg-white/5 text-zinc-500 text-[10px] font-mono">{history.length}</span>
+              <ChevronDown
+                size={13}
+                className={`ml-auto transition-transform duration-200 ${showHistory ? 'rotate-180' : ''}`}
+              />
+            </button>
+
+            <AnimatePresence>
+              {showHistory && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="overflow-hidden"
+                >
+                  <div className="rounded-[1.5rem] border border-white/5 bg-[#0a0f1e]/60 backdrop-blur-xl overflow-hidden">
+                    {/* Header */}
+                    <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/5 bg-white/[0.02]">
+                      <span className="text-xs text-zinc-500 font-medium">Click any entry to restore it</span>
+                      {!clearConfirm ? (
+                        <button
+                          onClick={() => setClearConfirm(true)}
+                          className="flex items-center gap-1.5 text-xs text-zinc-600 hover:text-red-400 transition-colors"
+                        >
+                          <Trash2 size={12} />
+                          Clear all
+                        </button>
+                      ) : (
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs text-zinc-500">Sure?</span>
+                          <button onClick={clearHistory} className="text-xs text-red-400 hover:text-red-300 font-semibold transition-colors">Yes, clear</button>
+                          <button onClick={() => setClearConfirm(false)} className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors">Cancel</button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Entries */}
+                    <div className="divide-y divide-white/[0.04]">
+                      {history.map((entry) => (
+                        <div
+                          key={entry.id}
+                          className="flex items-center gap-4 px-5 py-3.5 hover:bg-white/[0.03] transition-colors group/entry"
+                        >
+                          <button
+                            onClick={() => restoreFromHistory(entry)}
+                            className="flex-1 flex items-center gap-4 min-w-0 text-left"
+                          >
+                            <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center shrink-0">
+                              <RotateCcw size={13} className="text-emerald-400 opacity-0 group-hover/entry:opacity-100 transition-opacity" />
+                              <FileText size={13} className="text-emerald-400 opacity-100 group-hover/entry:opacity-0 transition-opacity absolute" />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold text-zinc-200 truncate group-hover/entry:text-emerald-400 transition-colors">
+                                {entry.hostname}
+                              </p>
+                              <div className="flex items-center gap-3 mt-0.5">
+                                <span className="text-[11px] text-zinc-600 flex items-center gap-1">
+                                  <Clock size={10} />
+                                  {new Date(entry.scrapedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                                <span className="text-[11px] text-zinc-700">·</span>
+                                <span className="text-[11px] text-zinc-600">{entry.pageCount} pages</span>
+                              </div>
+                            </div>
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); deleteHistoryEntry(entry.id); }}
+                            className="p-1.5 rounded-lg text-zinc-700 hover:text-red-400 hover:bg-red-500/10 transition-all opacity-0 group-hover/entry:opacity-100"
+                            aria-label="Delete entry"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         )}
 
         {!result && !isScraping && (
