@@ -1,3 +1,4 @@
+import type { Metadata } from 'next'
 import { Outfit, JetBrains_Mono } from 'next/font/google'
 import './globals.css'
 
@@ -11,9 +12,70 @@ const jetbrainsMono = JetBrains_Mono({
   variable: '--font-mono',
 })
 
-export const metadata = {
-  title: 'DocScraper | Context Builder for Coding Agents',
-  description: 'Transform documentation sites into structured Markdown for better AI context.',
+const BASE_URL = 'https://docscraper.codiac.online'
+
+export const metadata: Metadata = {
+  metadataBase: new URL(BASE_URL),
+  title: {
+    default: 'DocScraper — Context Builder for Coding Agents',
+    template: '%s | DocScraper',
+  },
+  description:
+    'Transform any documentation site into a single structured Markdown file. Build high-fidelity context for AI coding agents with DocScraper.',
+  keywords: [
+    'documentation scraper',
+    'AI context builder',
+    'LLM context',
+    'markdown generator',
+    'coding agent context',
+    'docs to markdown',
+    'RAG context',
+    'AI developer tools',
+  ],
+  authors: [{ name: 'DocScraper' }],
+  creator: 'DocScraper',
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      'max-snippet': -1,
+      'max-image-preview': 'large',
+      'max-video-preview': -1,
+    },
+  },
+  alternates: {
+    canonical: BASE_URL,
+  },
+  openGraph: {
+    type: 'website',
+    locale: 'en_US',
+    url: BASE_URL,
+    siteName: 'DocScraper',
+    title: 'DocScraper — Context Builder for Coding Agents',
+    description:
+      'Transform any documentation site into a single structured Markdown file. Build high-fidelity context for AI coding agents.',
+    images: [
+      {
+        url: '/og-image.png',
+        width: 1200,
+        height: 630,
+        alt: 'DocScraper — Context Builder for Coding Agents',
+      },
+    ],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'DocScraper — Context Builder for Coding Agents',
+    description:
+      'Transform any documentation site into a single structured Markdown file for AI coding agents.',
+    images: ['/og-image.png'],
+    creator: '@docscraper',
+  },
+  other: {
+    'theme-color': '#10b981',
+  },
 }
 
 export default function RootLayout({
