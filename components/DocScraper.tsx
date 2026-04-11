@@ -421,7 +421,7 @@ export default function DocScraper() {
           Doc<span className="text-emerald-500 relative">
             Scraper
             <div className="absolute -bottom-2 left-0 w-full h-1 bg-gradient-to-r from-emerald-500/50 to-transparent rounded-full" />
-          </span> AI
+          </span>
         </motion.h1>
         
         <motion.p 
