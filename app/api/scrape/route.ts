@@ -1,11 +1,149 @@
 import { NextRequest } from 'next/server';
 import * as cheerio from 'cheerio';
 import TurndownService from 'turndown';
+import puppeteer from 'puppeteer-core';
 
 const turndownService = new TurndownService({
   headingStyle: 'atx',
   codeBlockStyle: 'fenced',
 });
+
+// Realistic browser headers to avoid basic bot detection
+const BROWSER_HEADERS: Record<string, string> = {
+  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Accept-Encoding': 'gzip, deflate, br',
+  'Cache-Control': 'no-cache',
+  'Pragma': 'no-cache',
+  'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+  'Sec-Ch-Ua-Mobile': '?0',
+  'Sec-Ch-Ua-Platform': '"macOS"',
+  'Sec-Fetch-Dest': 'document',
+  'Sec-Fetch-Mode': 'navigate',
+  'Sec-Fetch-Site': 'none',
+  'Sec-Fetch-User': '?1',
+  'Upgrade-Insecure-Requests': '1',
+};
+
+// Detect Cloudflare challenge / bot protection pages
+function isCloudflareChallenge(html: string, status: number): boolean {
+  if (status === 403 || status === 503) {
+    const lower = html.toLowerCase();
+    return (
+      lower.includes('cf-browser-verification') ||
+      lower.includes('cf_chl_opt') ||
+      lower.includes('cloudflare') ||
+      lower.includes('just a moment') ||
+      lower.includes('checking your browser') ||
+      lower.includes('ray id') ||
+      lower.includes('challenge-platform')
+    );
+  }
+  return false;
+}
+
+// Get Chromium executable path for local development
+function getLocalChromePath(): string | null {
+  const paths = [
+    // macOS
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/Applications/Chromium.app/Contents/MacOS/Chromium',
+    // Linux
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/chromium',
+    // Windows
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+  ];
+  // In Node.js serverless we can't check fs synchronously easily,
+  // so we just return the first macOS path as default for local dev.
+  // The BROWSER_WS_ENDPOINT env var is preferred for production.
+  return paths[0];
+}
+
+// Fetch a page using puppeteer-core (headless browser)
+async function fetchWithBrowser(url: string): Promise<string> {
+  const wsEndpoint = process.env.BROWSER_WS_ENDPOINT;
+
+  let browser;
+  try {
+    if (wsEndpoint) {
+      // Production: connect to remote browser service (Browserless, BrowserBase, etc.)
+      browser = await puppeteer.connect({ browserWSEndpoint: wsEndpoint });
+    } else {
+      // Local dev: launch local Chrome
+      const executablePath = getLocalChromePath();
+      if (!executablePath) {
+        throw new Error('No local Chrome found. Set BROWSER_WS_ENDPOINT for production.');
+      }
+      browser = await puppeteer.launch({
+        executablePath,
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+      });
+    }
+
+    const page = await browser.newPage();
+    await page.setUserAgent(BROWSER_HEADERS['User-Agent']);
+    await page.setExtraHTTPHeaders({
+      'Accept-Language': BROWSER_HEADERS['Accept-Language'],
+    });
+
+    await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+
+    // Wait a bit for any remaining JS to execute
+    await page.waitForFunction(() => document.readyState === 'complete', { timeout: 10000 }).catch(() => {});
+
+    const html = await page.content();
+    return html;
+  } finally {
+    if (browser) {
+      if (process.env.BROWSER_WS_ENDPOINT) {
+        browser.disconnect();
+      } else {
+        await browser.close();
+      }
+    }
+  }
+}
+
+// Fetch HTML with realistic headers, falling back to headless browser if Cloudflare is detected
+async function fetchPage(url: string): Promise<{ html: string; ok: boolean }> {
+  try {
+    // First attempt: regular fetch with realistic headers
+    const response = await fetch(url, {
+      headers: BROWSER_HEADERS,
+      redirect: 'follow',
+    });
+
+    const html = await response.text();
+
+    // Check for Cloudflare challenge
+    if (isCloudflareChallenge(html, response.status)) {
+      console.log(`Cloudflare detected for ${url}, retrying with headless browser...`);
+      const browserHtml = await fetchWithBrowser(url);
+      return { html: browserHtml, ok: true };
+    }
+
+    if (!response.ok) {
+      return { html: '', ok: false };
+    }
+
+    return { html, ok: true };
+  } catch (fetchErr) {
+    // If fetch itself fails, try browser as last resort
+    console.log(`Fetch failed for ${url}, trying headless browser...`);
+    try {
+      const browserHtml = await fetchWithBrowser(url);
+      return { html: browserHtml, ok: true };
+    } catch (browserErr) {
+      console.error(`Browser fallback also failed for ${url}:`, browserErr);
+      return { html: '', ok: false };
+    }
+  }
+}
 
 // Remove unnecessary elements from the HTML before converting to Markdown
 function cleanHtml(html: string) {
@@ -73,19 +211,13 @@ export async function POST(req: NextRequest) {
           });
 
           try {
-            const response = await fetch(currentUrl, {
-              headers: {
-                'User-Agent': 'DocScraper-AI/1.0 (context builder for coding agents)',
-              },
-              next: { revalidate: 3600 },
-            });
+            const { html, ok } = await fetchPage(currentUrl);
 
-            if (!response.ok) {
+            if (!ok) {
               send('page_failed', { currentUrl });
               return null;
             }
 
-            const html = await response.text();
             const $ = cheerio.load(html);
 
             const title = $('h1').first().text() || $('title').text() || currentUrl;

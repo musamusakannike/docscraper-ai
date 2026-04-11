@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Search, 
@@ -34,6 +35,7 @@ import {
   Send,
   StopCircle,
   ChevronRight,
+  Code,
 } from 'lucide-react';
 
 interface ProgressEntry {
@@ -113,6 +115,7 @@ export default function DocScraper() {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [showAiPanel, setShowAiPanel] = useState(false);
+  const [previewMode, setPreviewMode] = useState<'raw' | 'rendered'>('raw');
   const aiAbortRef = useRef<AbortController | null>(null);
   const aiResponseRef = useRef<HTMLDivElement>(null);
   const resultRef = useRef<HTMLDivElement>(null);
@@ -674,21 +677,69 @@ export default function DocScraper() {
                 <div className="bg-[#0a0f1e]/90 flex flex-col h-[600px]">
                   <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-white/5 backdrop-blur-md">
                     <div className="flex items-center gap-2">
-                       <FileText size={16} className="text-emerald-400" />
-                       <span className="text-xs font-mono text-zinc-300 uppercase tracking-widest">context_data.md</span>
+                      <FileText size={16} className="text-emerald-400" />
+                      <span className="text-xs font-mono text-zinc-300 uppercase tracking-widest">context_data.md</span>
                     </div>
-                    <div className="flex gap-1.5">
-                      <div className="w-2.5 h-2.5 rounded-full bg-zinc-800" />
-                      <div className="w-2.5 h-2.5 rounded-full bg-zinc-800" />
-                      <div className="w-2.5 h-2.5 rounded-full bg-emerald-500/50 shadow-[0_0_8px_rgba(16,185,129,0.3)]" />
+                    <div className="flex items-center gap-4">
+                      {/* Raw / Preview toggle */}
+                      <div className="flex rounded-lg overflow-hidden border border-white/10 text-xs font-semibold">
+                        <button
+                          onClick={() => setPreviewMode('raw')}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 transition-all ${
+                            previewMode === 'raw'
+                              ? 'bg-emerald-500/20 text-emerald-400'
+                              : 'bg-white/5 text-zinc-600 hover:text-zinc-300'
+                          }`}
+                        >
+                          <Code size={11} /> Raw
+                        </button>
+                        <button
+                          onClick={() => setPreviewMode('rendered')}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 transition-all border-l border-white/10 ${
+                            previewMode === 'rendered'
+                              ? 'bg-emerald-500/20 text-emerald-400'
+                              : 'bg-white/5 text-zinc-600 hover:text-zinc-300'
+                          }`}
+                        >
+                          <Eye size={11} /> Preview
+                        </button>
+                      </div>
+                      <div className="flex gap-1.5">
+                        <div className="w-2.5 h-2.5 rounded-full bg-zinc-800" />
+                        <div className="w-2.5 h-2.5 rounded-full bg-zinc-800" />
+                        <div className="w-2.5 h-2.5 rounded-full bg-emerald-500/50 shadow-[0_0_8px_rgba(16,185,129,0.3)]" />
+                      </div>
                     </div>
                   </div>
-                  <div 
-                    ref={resultRef}
-                    className="p-8 overflow-y-auto font-mono text-sm text-zinc-400 leading-relaxed selection:bg-emerald-500/30 auto-scrollbar"
-                  >
-                    {result}
-                  </div>
+
+                  <AnimatePresence mode="wait">
+                    {previewMode === 'raw' ? (
+                      <motion.div
+                        key="raw"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.15 }}
+                        ref={resultRef}
+                        className="p-8 overflow-y-auto font-mono text-sm text-zinc-400 leading-relaxed selection:bg-emerald-500/30 auto-scrollbar flex-1"
+                      >
+                        {result}
+                      </motion.div>
+                    ) : (
+                      <motion.div
+                        key="rendered"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.15 }}
+                        className="p-8 overflow-y-auto auto-scrollbar flex-1"
+                      >
+                        <div className="prose prose-invert prose-emerald prose-sm max-w-none prose-headings:text-zinc-100 prose-p:text-zinc-400 prose-a:text-emerald-400 prose-a:no-underline hover:prose-a:underline prose-code:text-emerald-300 prose-code:bg-white/5 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-pre:bg-white/5 prose-pre:border prose-pre:border-white/10 prose-blockquote:border-emerald-500/40 prose-blockquote:text-zinc-500 prose-strong:text-zinc-200 prose-hr:border-white/10">
+                          <ReactMarkdown>{result ?? ''}</ReactMarkdown>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </div>
               </div>
 
