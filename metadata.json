@@ -1,5 +1,5 @@
 {
-  "name": "DocScraper AI",
+  "name": "DocScraper",
   "description": "Scrape and compile entire documentation sites into a single structured Markdown file for AI context.",
   "requestFramePermissions": []
 }

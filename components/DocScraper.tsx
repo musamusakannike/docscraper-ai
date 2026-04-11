@@ -1145,7 +1145,7 @@ export default function DocScraper() {
 
       <footer className="mt-20 w-full max-w-4xl py-12 border-t border-white/5 text-zinc-500 text-sm flex flex-col md:flex-row items-center justify-between gap-8">
         <div className="flex items-center gap-6">
-          <p>© 2026 DocScraper AI</p>
+          <p>© 2026 DocScraper</p>
           <span className="w-4 h-[1px] bg-zinc-800" />
           <p className="text-emerald-500/60 font-medium">Enterprise Grade Scraping</p>
         </div>

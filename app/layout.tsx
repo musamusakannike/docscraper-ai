@@ -12,7 +12,7 @@ const jetbrainsMono = JetBrains_Mono({
 })
 
 export const metadata = {
-  title: 'DocScraper AI | Context Builder for Coding Agents',
+  title: 'DocScraper | Context Builder for Coding Agents',
   description: 'Transform documentation sites into structured Markdown for better AI context.',
 }
 

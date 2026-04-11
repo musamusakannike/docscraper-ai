@@ -36,8 +36,8 @@ export async function POST(req: NextRequest) {
     headers: {
       'Authorization': `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://docscraper.ai',
-      'X-Title': 'DocScraper AI',
+      'HTTP-Referer': 'https://docscraper.codiac.online',
+      'X-Title': 'DocScraper',
     },
     body: JSON.stringify(body),
   });
