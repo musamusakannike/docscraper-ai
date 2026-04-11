@@ -26,21 +26,19 @@ const BROWSER_HEADERS: Record<string, string> = {
   'Upgrade-Insecure-Requests': '1',
 };
 
-// Detect Cloudflare challenge / bot protection pages
-function isCloudflareChallenge(html: string, status: number): boolean {
-  if (status === 403 || status === 503) {
-    const lower = html.toLowerCase();
-    return (
-      lower.includes('cf-browser-verification') ||
-      lower.includes('cf_chl_opt') ||
-      lower.includes('cloudflare') ||
-      lower.includes('just a moment') ||
-      lower.includes('checking your browser') ||
-      lower.includes('ray id') ||
-      lower.includes('challenge-platform')
-    );
-  }
-  return false;
+// Detect Cloudflare challenge / bot protection pages (works on any HTTP status)
+function isCloudflareChallenge(html: string): boolean {
+  const lower = html.toLowerCase();
+  return (
+    lower.includes('cf-browser-verification') ||
+    lower.includes('cf_chl_opt') ||
+    lower.includes('just a moment') ||
+    lower.includes('checking your browser') ||
+    lower.includes('challenge-platform') ||
+    lower.includes('performing security verification') ||
+    lower.includes('security service to protect') ||
+    (lower.includes('cloudflare') && lower.includes('ray id'))
+  );
 }
 
 // Get Chromium executable path for local development
@@ -91,12 +89,30 @@ async function fetchWithBrowser(url: string): Promise<string> {
       'Accept-Language': BROWSER_HEADERS['Accept-Language'],
     });
 
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+    // Set viewport to look like a real browser
+    await page.setViewport({ width: 1366, height: 768 });
 
-    // Wait a bit for any remaining JS to execute
-    await page.waitForFunction(() => document.readyState === 'complete', { timeout: 10000 }).catch(() => {});
+    await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
 
+    // Wait for Cloudflare challenge to resolve by polling for challenge markers to disappear
+    // CF challenges typically redirect or mutate the DOM after verification
+    const maxWait = 30000;
+    const pollInterval = 1000;
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < maxWait) {
+      const content = await page.content();
+      if (!isCloudflareChallenge(content)) {
+        // Challenge resolved — return the real page
+        return content;
+      }
+      // Still on challenge page, wait and check again
+      await new Promise((r) => setTimeout(r, pollInterval));
+    }
+
+    // Return whatever we have after timeout (may still be challenge page)
     const html = await page.content();
+    console.warn(`Cloudflare challenge did not resolve within ${maxWait}ms for ${url}`);
     return html;
   } finally {
     if (browser) {
@@ -120,8 +136,8 @@ async function fetchPage(url: string): Promise<{ html: string; ok: boolean }> {
 
     const html = await response.text();
 
-    // Check for Cloudflare challenge
-    if (isCloudflareChallenge(html, response.status)) {
+    // Check for Cloudflare challenge (can appear on any status code, including 200)
+    if (isCloudflareChallenge(html)) {
       console.log(`Cloudflare detected for ${url}, retrying with headless browser...`);
       const browserHtml = await fetchWithBrowser(url);
       return { html: browserHtml, ok: true };
@@ -213,7 +229,10 @@ export async function POST(req: NextRequest) {
           try {
             const { html, ok } = await fetchPage(currentUrl);
 
-            if (!ok) {
+            if (!ok || isCloudflareChallenge(html)) {
+              if (isCloudflareChallenge(html)) {
+                console.warn(`Cloudflare challenge not resolved for ${currentUrl}, skipping.`);
+              }
               send('page_failed', { currentUrl });
               return null;
             }
