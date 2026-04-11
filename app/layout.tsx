@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import { Analytics } from '@vercel/analytics/next'
 import { Outfit, JetBrains_Mono } from 'next/font/google'
 import './globals.css'
 
@@ -89,6 +90,7 @@ export default function RootLayout({
         <div className="fixed inset-0 -z-10 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(16,185,129,0.15),rgba(255,255,255,0))]" />
         <div className="fixed inset-0 -z-10 bg-[radial-gradient(circle_500px_at_50%_200px,rgba(5,150,105,0.05),transparent)]" />
         {children}
+        <Analytics />
       </body>
     </html>
   )
